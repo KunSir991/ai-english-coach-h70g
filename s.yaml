@@ -1,0 +1,51 @@
+## fc3.0的模板
+edition: 3.0.0
+name: ai-english-coach
+access: default
+vars:
+  region: "cn-hangzhou"
+  prefix: 'h70g'
+resources:
+  web:
+    component: fc3
+    actions:
+      pre-deploy:
+        - run: sh build.sh
+          path: ./
+    props:
+      region: ${vars.region}
+      role: acs:ram::1563457855438522:role/aliyunfcdefaultrole
+      description: AI 英语口语陪练函数
+      runtime: custom
+      cpu: 2
+      memorySize: 4096
+      diskSize: 512
+      timeout: 10
+      instanceConcurrency: 100
+      customRuntimeConfig:
+        command:
+          - ./bootstrap
+      environmentVariables:
+        LIVE_MIC_APP_ID: mytest
+        LIVE_MIC_APP_KEY: ${env(liveMicAppKey)}
+        AI_AGENT_VOICE_CHAT_AI_AGENT_ID: mytest
+        AI_AGENT_REGION: cn-hangzhou
+      functionName: 'ai-english-coach-web-${vars.prefix}'
+      code: ./
+  custom-domain:
+    component: fc3-domain
+    props:
+      region: ${vars.region}
+      domainName: auto
+      protocol: HTTP
+      routeConfig:
+        routes:
+          - path: /*
+            functionName: ${resources.web.props.functionName}
+            methods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - OPTIONS
+            qualifier: LATEST
