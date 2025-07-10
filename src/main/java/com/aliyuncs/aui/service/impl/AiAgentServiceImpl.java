@@ -23,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * AiAgentServiceImpl
+ * 使用ECS实例角色进行身份验证，无需配置明文AK/SK
  *
  * @author chunlei.zcl
  */
@@ -46,19 +47,100 @@ public class AiAgentServiceImpl implements AiAgentService {
     @Value("${biz.ai_aent.vision_chat_ai_agent_id}")
     private String visionChatAiAgentId;
 
-    @Value("${biz.openapi.access.key}")
-    private String accessKeyId;
-    @Value("${biz.openapi.access.secret}")
-    private String accessKeySecret;
+    // 移除明文AK/SK配置
+    // @Value("${biz.openapi.access.key}")
+    // private String accessKeyId;
+    // @Value("${biz.openapi.access.secret}")
+    // private String accessKeySecret;
 
     @PostConstruct
     public void createClient() throws Exception {
-        Config config = new Config()
-                .setAccessKeyId(System.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID"))
-                .setAccessKeySecret(System.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET"))
-                .setSecurityToken(System.getenv("ALIBABA_CLOUD_SECURITY_TOKEN"));
-        config.endpoint = "ice." + imsRegion + ".aliyuncs.com";
-        client = new Client(config);
+        try {
+            // 使用ECS实例角色进行身份验证
+            Config config = createConfigWithEcsRole();
+            config.endpoint = "ice." + imsRegion + ".aliyuncs.com";
+            client = new Client(config);
+            log.info("AI Agent client initialized successfully with ECS role authentication for region: {}", imsRegion);
+        } catch (Exception e) {
+            log.error("Failed to initialize AI Agent client with ECS role authentication", e);
+            throw e;
+        }
+    }
+
+    /**
+     * 创建使用ECS实例角色的配置
+     * 使用阿里云凭证客户端来正确获取ECS实例角色凭证
+     */
+    private Config createConfigWithEcsRole() {
+        try {
+            // 创建凭证配置，使用默认凭证链
+            com.aliyun.credentials.models.Config credentialConfig = new com.aliyun.credentials.models.Config();
+
+            // 检查是否有环境变量配置的AK/SK（用于本地开发或容器环境）
+            String accessKeyId = System.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID");
+            String accessKeySecret = System.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET");
+            String securityToken = System.getenv("ALIBABA_CLOUD_SECURITY_TOKEN");
+
+            if (StringUtils.isNotEmpty(accessKeyId) && StringUtils.isNotEmpty(accessKeySecret)) {
+                // 使用环境变量中的凭证
+                log.info("Using credentials from environment variables");
+                credentialConfig.setType("access_key");
+                credentialConfig.setAccessKeyId(accessKeyId);
+                credentialConfig.setAccessKeySecret(accessKeySecret);
+
+                if (StringUtils.isNotEmpty(securityToken)) {
+                    credentialConfig.setSecurityToken(securityToken);
+                }
+            } else {
+                // 使用ECS实例角色
+                log.info("Using ECS instance role for authentication");
+                credentialConfig.setType("ecs_ram_role");
+                // 可以指定角色名称，如果不指定则使用实例绑定的第一个角色
+                // credentialConfig.setRoleName("your-role-name");
+            }
+
+            // 创建凭证客户端
+            com.aliyun.credentials.Client credentialClient = new com.aliyun.credentials.Client(credentialConfig);
+
+            // 创建OpenAPI配置并设置凭证
+            com.aliyun.teaopenapi.models.Config config = new com.aliyun.teaopenapi.models.Config();
+            config.setCredential(credentialClient);
+
+            return config;
+
+        } catch (Exception e) {
+            log.error("Failed to create config with ECS role: {}", e.getMessage());
+            // 如果凭证客户端创建失败，回退到传统方式
+            return createFallbackConfig();
+        }
+    }
+
+    /**
+     * 回退配置方法，当凭证客户端创建失败时使用
+     */
+    private Config createFallbackConfig() {
+        log.warn("Using fallback configuration method");
+        com.aliyun.teaopenapi.models.Config config = new com.aliyun.teaopenapi.models.Config();
+
+        // 检查环境变量
+        String accessKeyId = System.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID");
+        String accessKeySecret = System.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET");
+        String securityToken = System.getenv("ALIBABA_CLOUD_SECURITY_TOKEN");
+
+        if (StringUtils.isNotEmpty(accessKeyId) && StringUtils.isNotEmpty(accessKeySecret)) {
+            log.info("Using environment variables in fallback mode");
+            config.setAccessKeyId(accessKeyId);
+            config.setAccessKeySecret(accessKeySecret);
+
+            if (StringUtils.isNotEmpty(securityToken)) {
+                config.setSecurityToken(securityToken);
+            }
+        } else {
+            log.warn("No credentials found in environment variables, relying on SDK default credential chain");
+            // 不设置任何凭证，让SDK使用默认凭证链
+        }
+
+        return config;
     }
 
     @Override
@@ -395,15 +477,13 @@ public class AiAgentServiceImpl implements AiAgentService {
 
     private Client createClient(String region) {
         try {
-            Config config = new Config()
-                    .setAccessKeyId(System.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID"))
-                    .setAccessKeySecret(System.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET"))
-                    .setSecurityToken(System.getenv("ALIBABA_CLOUD_SECURITY_TOKEN"));
+            Config config = createConfigWithEcsRole();
             // 访问的域名
             config.endpoint = String.format("ice.%s.aliyuncs.com", region);
+            log.info("Creating client for region: {} with ECS role authentication", region);
             return new Client(config);
         } catch (Exception e) {
-            log.error("createClient error. e:{}", e.getMessage());
+            log.error("createClient error for region: {}. e:{}", region, e.getMessage());
             throw new RuntimeException(e);
         }
     }
@@ -480,6 +560,5 @@ public class AiAgentServiceImpl implements AiAgentService {
             log.error("describeAiAgentInstance error. e:{}", e.getMessage());
         }
         return AiAgentInstanceDescribeResponse.builder().code(code).message(message).requestId(requestId).errorCode(errCode).build();
-
     }
 }

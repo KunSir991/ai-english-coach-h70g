@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-java -Dserver.port=9000 -jar webframework.jar
+java -Dserver.port=9000 -jar aui-ims-robot-0.0.1-SNAPSHOT.jar
